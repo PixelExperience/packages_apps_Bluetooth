@@ -11,7 +11,7 @@ LOCAL_JAVA_LIBRARIES := \
     libprotobuf-java-micro
 
 LOCAL_STATIC_JAVA_LIBRARIES :=  \
-    com.android.emailcommon \
+#    com.android.emailcommon \
     android-support-test \
     mockito-target \
     legacy-android-test
