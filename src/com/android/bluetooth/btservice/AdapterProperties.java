@@ -63,8 +63,13 @@ class AdapterProperties {
     static final int MAX_CONNECTED_AUDIO_DEVICES_LOWER_BOND = 1;
     private static final int MAX_CONNECTED_AUDIO_DEVICES_UPPER_BOUND = 5;
     private static final int BLUETOOTH_NAME_MAX_LENGTH_BYTES = 248;
+
     private static final String A2DP_OFFLOAD_ENABLE_PROPERTY =
             "persist.bluetooth.a2dp_offload.enable";
+    private static final String A2DP_OFFLOAD_DISABLED_PROPERTY =
+            "persist.bluetooth.a2dp_offload.disabled";
+    private static final String A2DP_OFFLOAD_SUPPORTED_PROPERTY =
+            "ro.bluetooth.a2dp_offload.supported";
 
     private static final long DEFAULT_DISCOVERY_TIMEOUT_MS = 12800;
     private static final int BD_ADDR_LEN = 6; // in bytes
@@ -189,12 +194,20 @@ class AdapterProperties {
         // Make sure the final value of max connected audio devices is within allowed range
         mMaxConnectedAudioDevices = Math.min(Math.max(propertyOverlayedMaxConnectedAudioDevices,
                 MAX_CONNECTED_AUDIO_DEVICES_LOWER_BOND), MAX_CONNECTED_AUDIO_DEVICES_UPPER_BOUND);
+        // if QTI stack, overwrite max audio connections to 2
+        if(mService.isVendorIntfEnabled() && mMaxConnectedAudioDevices > 2) {
+            Log.i(TAG, "overwriting mMaxConnectedAudioDevices to 2 for vendor stack");
+            mMaxConnectedAudioDevices = 2;
+        }
+
         Log.i(TAG, "init(), maxConnectedAudioDevices, default="
                 + configDefaultMaxConnectedAudioDevices + ", propertyOverlayed="
                 + propertyOverlayedMaxConnectedAudioDevices + ", finalValue="
                 + mMaxConnectedAudioDevices);
 
-        mA2dpOffloadEnabled = SystemProperties.getBoolean(A2DP_OFFLOAD_ENABLE_PROPERTY, false);
+        mA2dpOffloadEnabled =
+                SystemProperties.getBoolean(A2DP_OFFLOAD_SUPPORTED_PROPERTY, false)
+                && !SystemProperties.getBoolean(A2DP_OFFLOAD_DISABLED_PROPERTY, false);
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED);

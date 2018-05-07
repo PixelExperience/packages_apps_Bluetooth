@@ -292,8 +292,12 @@ class BrowsedPlayerWrapper {
                 }
 
                 if (item.isBrowsable()) {
-                    Folder f = new Folder(item.getMediaId(), false,
-                            item.getDescription().getTitle().toString());
+                    CharSequence titleCharSequence = item.getDescription().getTitle();
+                    String title = "Not Provided";
+                    if (titleCharSequence != null) {
+                        title = titleCharSequence.toString();
+                    }
+                    Folder f = new Folder(item.getMediaId(), false, title);
                     return_list.add(new ListItem(f));
                 } else {
                     return_list.add(new ListItem(Util.toMetadata(item)));
@@ -315,12 +319,15 @@ class BrowsedPlayerWrapper {
         }
     }
 
-    public void dump(StringBuilder sb) {
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
         sb.append("Browsable Package Name: " + mPackageName + "\n");
         sb.append("   Cached Media ID's: ");
         for (String id : mCachedFolders.keySet()) {
-            sb.append(id + " ");
+            sb.append("\"" + id + "\", ");
         }
-        sb.append("\n\n");
+        sb.append("\n");
+        return sb.toString();
     }
 }

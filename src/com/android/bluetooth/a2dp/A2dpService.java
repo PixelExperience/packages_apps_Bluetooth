@@ -34,6 +34,7 @@ import android.provider.Settings;
 import android.support.annotation.GuardedBy;
 import android.support.annotation.VisibleForTesting;
 import android.util.Log;
+import android.os.SystemProperties;
 
 import com.android.bluetooth.BluetoothMetricsProto;
 import com.android.bluetooth.Utils;
@@ -350,19 +351,25 @@ public class A2dpService extends ProfileService {
                     + " : too many connected devices");
             return false;
         }
-        // Check priority and accept or reject the connection
+        // Check priority and accept or reject the connection.
+        // Note: Logic can be simplified, but keeping it this way for readability
         int priority = getPriority(device);
         int bondState = mAdapterService.getBondState(device);
-        // If priority is undefined, it is likely that our SDP has not completed and peer is
-        // initiating the connection. Allow the connection only if the device is bonded or bonding.
-        if ((priority == BluetoothProfile.PRIORITY_UNDEFINED)
-                && (bondState == BluetoothDevice.BOND_NONE)) {
-            Log.e(TAG, "okToConnect: cannot connect to " + device + " : priority=" + priority
-                    + " bondState=" + bondState);
-            return false;
-        }
-        if (priority <= BluetoothProfile.PRIORITY_OFF) {
-            Log.e(TAG, "okToConnect: cannot connect to " + device + " : priority=" + priority);
+        // If priority is undefined, it is likely that service discovery has not completed and peer
+        // initiated the connection. Allow this connection only if the device is bonded or bonding
+        boolean serviceDiscoveryPending = (priority == BluetoothProfile.PRIORITY_UNDEFINED)
+                && (bondState == BluetoothDevice.BOND_BONDING
+                || bondState == BluetoothDevice.BOND_BONDED);
+        // Also allow connection when device is bonded/bonding and priority is ON/AUTO_CONNECT.
+        boolean isEnabled = (priority == BluetoothProfile.PRIORITY_ON
+                || priority == BluetoothProfile.PRIORITY_AUTO_CONNECT)
+                && (bondState == BluetoothDevice.BOND_BONDED
+                || bondState == BluetoothDevice.BOND_BONDING);
+        if (!serviceDiscoveryPending && !isEnabled) {
+            // Otherwise, reject the connection if no service discovery is pending and priority is
+            // neither PRIORITY_ON nor PRIORITY_AUTO_CONNECT
+            Log.w(TAG, "okToConnect: return false, priority=" + priority + ", bondState="
+                    + bondState);
             return false;
         }
         return true;
@@ -436,6 +443,8 @@ public class A2dpService extends ProfileService {
             if (device == null) {
                 // Clear the active device
                 mActiveDevice = null;
+                // This needs to happen before we inform the audio manager that the device
+                // disconnected. Please see comment in broadcastActiveDevice() for why.
                 broadcastActiveDevice(null);
                 if (previousActiveDevice != null) {
                     // Make sure the Audio Manager knows the previous Active device is disconnected
@@ -471,6 +480,8 @@ public class A2dpService extends ProfileService {
 
             boolean deviceChanged = !Objects.equals(device, mActiveDevice);
             mActiveDevice = device;
+            // This needs to happen before we inform the audio manager that the device
+            // disconnected. Please see comment in broadcastActiveDevice() for why.
             broadcastActiveDevice(mActiveDevice);
             if (deviceChanged) {
                 // Send an intent with the active device codec config
@@ -490,7 +501,11 @@ public class A2dpService extends ProfileService {
                 // Inform the Audio Service about the codec configuration
                 // change, so the Audio Service can reset accordingly the audio
                 // feeding parameters in the Audio HAL to the Bluetooth stack.
-                mAudioManager.handleBluetoothA2dpDeviceConfigChange(mActiveDevice);
+                String offloadSupported =
+                     SystemProperties.get("persist.vendor.bt.enable.splita2dp");
+                if (!(offloadSupported.isEmpty() || "true".equals(offloadSupported))) {
+                    mAudioManager.handleBluetoothA2dpDeviceConfigChange(mActiveDevice);
+                }
             }
         }
         return true;
@@ -807,6 +822,16 @@ public class A2dpService extends ProfileService {
     private void broadcastActiveDevice(BluetoothDevice device) {
         if (DBG) {
             Log.d(TAG, "broadcastActiveDevice(" + device + ")");
+        }
+
+        // Currently the audio service can only remember the volume for a single device. We send
+        // active device changed intent after informing AVRCP that the device switched so it can
+        // set the stream volume to the new device before A2DP informs the audio service that the
+        // device has changed. This is to avoid the indeterminate volume state that exists when
+        // in the middle of switching devices.
+        if (AvrcpTargetService.get() != null) {
+            AvrcpTargetService.get().volumeDeviceSwitched(
+                    device != null ? device.getAddress() : "");
         }
 
         Intent intent = new Intent(BluetoothA2dp.ACTION_ACTIVE_DEVICE_CHANGED);
