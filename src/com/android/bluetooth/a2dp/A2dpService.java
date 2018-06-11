@@ -421,12 +421,15 @@ public class A2dpService extends ProfileService {
      * The check considers a number of factors during the evaluation.
      *
      * @param device the peer device to connect to
+     * @param isOutgoingRequest if true, the check is for outgoing connection
+     * request, otherwise is for incoming connection request
      * @return true if connection is allowed, otherwise false
      */
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
-    public boolean okToConnect(BluetoothDevice device) {
+    public boolean okToConnect(BluetoothDevice device, boolean isOutgoingRequest) {
+        Log.i(TAG, "okToConnect: device " + device + " isOutgoingRequest: " + isOutgoingRequest);
         // Check if this is an incoming connection in Quiet mode.
-        if (mAdapterService.isQuietModeEnabled()) {
+        if (mAdapterService.isQuietModeEnabled() && !isOutgoingRequest) {
             Log.e(TAG, "okToConnect: cannot connect to " + device + " : quiet mode enabled");
             return false;
         }
@@ -529,6 +532,11 @@ public class A2dpService extends ProfileService {
             if (DBG) {
                 Log.d(TAG, "setActiveDevice(" + device + "): previous is " + previousActiveDevice);
             }
+
+            if (previousActiveDevice != null && AvrcpTargetService.get() != null) {
+                AvrcpTargetService.get().storeVolumeForDevice(previousActiveDevice);
+            }
+
             if (device == null) {
                 // Clear the active device
                 mActiveDevice = null;
@@ -546,7 +554,7 @@ public class A2dpService extends ProfileService {
                             previousActiveDevice, BluetoothProfile.STATE_DISCONNECTED,
                             BluetoothProfile.A2DP,
                             getConnectionState(previousActiveDevice)
-                                == BluetoothProfile.STATE_CONNECTED);
+                                == BluetoothProfile.STATE_CONNECTED, -1);
                     // Make sure the Active device in native layer is set to null and audio is off
                     if (!mA2dpNativeInterface.setActiveDevice(null)) {
                         Log.w(TAG, "setActiveDevice(null): Cannot remove active device in native "
@@ -558,6 +566,11 @@ public class A2dpService extends ProfileService {
 
             BluetoothCodecStatus codecStatus = null;
             A2dpStateMachine sm = mStateMachines.get(device);
+            boolean deviceChanged = !Objects.equals(device, mActiveDevice);
+            if (!deviceChanged) {
+                Log.e(TAG, "setActiveDevice(" + device + "): already set to active ");
+                return true;
+            }
             if (sm == null) {
                 Log.e(TAG, "setActiveDevice(" + device + "): Cannot set as active: "
                           + "no state machine");
@@ -573,14 +586,13 @@ public class A2dpService extends ProfileService {
                 !Objects.equals(device, mActiveDevice) &&
                 getConnectionState(mActiveDevice) == BluetoothProfile.STATE_CONNECTED) {
                 Log.d(TAG,"Ignore setActiveDevice request");
-                return true;
+                return false;
             }
             if (!mA2dpNativeInterface.setActiveDevice(device)) {
                 Log.e(TAG, "setActiveDevice(" + device + "): Cannot set as active in native layer");
                 return false;
             }
             codecStatus = sm.getCodecStatus();
-            boolean deviceChanged = !Objects.equals(device, mActiveDevice);
             mActiveDevice = device;
             // This needs to happen before we inform the audio manager that the device
             // disconnected. Please see comment in broadcastActiveDevice() for why.
@@ -595,11 +607,21 @@ public class A2dpService extends ProfileService {
                 if (previousActiveDevice != null) {
                     mAudioManager.setBluetoothA2dpDeviceConnectionStateSuppressNoisyIntent(
                             previousActiveDevice, BluetoothProfile.STATE_DISCONNECTED,
-                            BluetoothProfile.A2DP, true);
+                            BluetoothProfile.A2DP, true, -1);
                 }
+
+                int rememberedVolume = -1;
+                if (AvrcpTargetService.get() != null) {
+                    AvrcpTargetService.get().volumeDeviceSwitched(mActiveDevice);
+
+                    rememberedVolume = AvrcpTargetService.get()
+                            .getRememberedVolumeForDevice(mActiveDevice);
+                }
+
                 mAudioManager.setBluetoothA2dpDeviceConnectionStateSuppressNoisyIntent(
                         mActiveDevice, BluetoothProfile.STATE_CONNECTED, BluetoothProfile.A2DP,
-                        true);
+                        true, rememberedVolume);
+
                 // Inform the Audio Service about the codec configuration
                 // change, so the Audio Service can reset accordingly the audio
                 // feeding parameters in the Audio HAL to the Bluetooth stack.
@@ -958,16 +980,6 @@ public class A2dpService extends ProfileService {
     private void broadcastActiveDevice(BluetoothDevice device) {
         if (DBG) {
             Log.d(TAG, "broadcastActiveDevice(" + device + ")");
-        }
-
-        // Currently the audio service can only remember the volume for a single device. We send
-        // active device changed intent after informing AVRCP that the device switched so it can
-        // set the stream volume to the new device before A2DP informs the audio service that the
-        // device has changed. This is to avoid the indeterminate volume state that exists when
-        // in the middle of switching devices.
-        if (AvrcpTargetService.get() != null) {
-            AvrcpTargetService.get().volumeDeviceSwitched(
-                    device != null ? device.getAddress() : "");
         }
 
         Intent intent = new Intent(BluetoothA2dp.ACTION_ACTIVE_DEVICE_CHANGED);
