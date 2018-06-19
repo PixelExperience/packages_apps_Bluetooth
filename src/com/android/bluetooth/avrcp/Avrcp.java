@@ -1320,7 +1320,7 @@ public final class Avrcp {
 
                 boolean isSplitA2dpEnabled = false;
                 long update_interval = 0L;
-                String offloadSupported = SystemProperties.get("persist.vendor.bt.enable.splita2dp");
+                String offloadSupported = SystemProperties.get("persist.vendor.btstack.enable.splita2dp");
                 if (offloadSupported.isEmpty() || "true".equals(offloadSupported)) {
                     isSplitA2dpEnabled = true;
                     Log.v(TAG,"split enabled");
@@ -3441,9 +3441,4 @@ public final class Avrcp {
 
     private native boolean registerNotificationRspNowPlayingChangedNative(int type);
 
-    public static String getImgHandleFromTitle(String title) {
-        if (mAvrcpBipRsp != null && title != null)
-            return mAvrcpBipRsp.getImgHandle(mAvrcpBipRsp.getAlbumName(title));
-        return null;
-    }
 }

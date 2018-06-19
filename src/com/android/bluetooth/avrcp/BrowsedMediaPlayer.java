@@ -318,6 +318,15 @@ class BrowsedMediaPlayer {
                 /* get rootfolder uid from media player */
                 if (mMediaId == null) {
                     mMediaId = mMediaBrowser.getRoot();
+                    Log.d(TAG, "media browser root = " + mMediaId);
+
+                    if (mMediaId == null || mMediaId.length() == 0) {
+                        Log.e(TAG, "onBrowseConnect: root value is empty or null");
+                        mMediaInterface.setBrowsedPlayerRsp(
+                                mBDAddr, AvrcpConstants.RSP_INTERNAL_ERR, (byte) 0x00, 0, null);
+                        return;
+                    }
+
                     /*
                      * assuming that root folder uid will not change on uids changed
                      */
@@ -779,7 +788,7 @@ class BrowsedMediaPlayer {
                     break;
 
                 case AvrcpConstants.ATTRID_COVER_ART:
-                    attrValue = Avrcp.getImgHandleFromTitle(desc.getTitle().toString());
+                    attrValue = Avrcp_ext.getImgHandleFromTitle(desc.getTitle().toString());
                     break;
 
                 default:
@@ -796,7 +805,7 @@ class BrowsedMediaPlayer {
             }
         }
         if (DEBUG) {
-            Log.d(TAG, "getAttrValue: attrvalue = " + attrValue + "attr id:" + attr);
+            Log.d(TAG, "getAttrValue: attrvalue = " + attrValue + " attr id: " + attr);
         }
         return attrValue;
     }

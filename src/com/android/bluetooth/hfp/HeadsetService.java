@@ -1100,7 +1100,7 @@ public class HeadsetService extends ProfileService {
         return true;
     }
 
-    boolean isAudioOn() {
+    public boolean isAudioOn() {
         enforceCallingOrSelfPermission(BLUETOOTH_PERM, "Need BLUETOOTH permission");
         int numConnectedAudioDevices = getNonIdleAudioDevices().size();
         Log.d(TAG," isAudioOn: The number of audio connected devices "
@@ -1702,17 +1702,20 @@ public class HeadsetService extends ProfileService {
             mSystemInterface.getHeadsetPhoneState().setNumHeldCall(numHeld);
             mSystemInterface.getHeadsetPhoneState().setCallState(callState);
         });
-        doForEachConnectedConnectingStateMachine(
-                stateMachine -> stateMachine.sendMessage(HeadsetStateMachine.CALL_STATE_CHANGED,
-                        new HeadsetCallState(numActive, numHeld, callState, number, type)));
-        mStateMachinesThread.getThreadHandler().post(() -> {
-            if (callState == HeadsetHalConstants.CALL_STATE_IDLE
-                    && !shouldCallAudioBeActive() && !isAudioOn()) {
-                // Resume A2DP when call ended and SCO is not connected
-                mSystemInterface.getAudioManager().setParameters("A2dpSuspended=false");
+        List<BluetoothDevice> availableDevices =
+                    getDevicesMatchingConnectionStates(CONNECTING_CONNECTED_STATES);
+        if(availableDevices.size() > 0) {
+            Log.i(TAG, "Update the phoneStateChanged status to connecting and connected devices");
+            doForEachConnectedConnectingStateMachine(
+                     stateMachine -> stateMachine.sendMessage(HeadsetStateMachine.CALL_STATE_CHANGED,
+                             new HeadsetCallState(numActive, numHeld, callState, number, type)));
+        } else {
+            if (!(mSystemInterface.isInCall() || mSystemInterface.isRinging())) {
+                //If no device is connected, resume A2DP if there is no call
+                Log.i(TAG, "No device is connected and no call, set A2DPsuspended to false");
+                mHfpA2dpSyncInterface.releaseA2DP(null);
             }
-        });
-
+        }
     }
 
     private void clccResponse(int index, int direction, int status, int mode, boolean mpty,
@@ -1900,7 +1903,7 @@ public class HeadsetService extends ProfileService {
      */
     public boolean okToAcceptConnection(BluetoothDevice device) {
         // Check if this is an incoming connection in Quiet mode.
-        boolean isPts = SystemProperties.getBoolean("bt.pts.certification", false);
+        boolean isPts = SystemProperties.getBoolean("vendor.bt.pts.certification", false);
         if (mAdapterService.isQuietModeEnabled()) {
             Log.w(TAG, "okToAcceptConnection: return false as quiet mode enabled");
             return false;
@@ -1945,10 +1948,13 @@ public class HeadsetService extends ProfileService {
      */
     public boolean isScoAcceptable(BluetoothDevice device) {
         synchronized (mStateMachines) {
-            if (device == null || !device.equals(mActiveDevice)) {
-                Log.w(TAG, "isScoAcceptable: rejected SCO since " + device
+            //allow 2nd eSCO from non-active tws+ earbud as well
+            if (!mAdapterService.isTwsPlusDevice(device)) {
+                if (device == null || !device.equals(mActiveDevice)) {
+                    Log.w(TAG, "isScoAcceptable: rejected SCO since " + device
                         + " is not the current active device " + mActiveDevice);
-                return false;
+                    return false;
+                }
             }
             if (mForceScoAudio) {
                 return true;
