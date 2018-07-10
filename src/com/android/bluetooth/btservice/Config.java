@@ -165,7 +165,8 @@ public class Config {
 
     private static synchronized boolean addAudioProfiles(String serviceName) {
         Log.d(TAG," addAudioProfiles profile" + serviceName);
-        boolean isA2dpSink = SystemProperties.getBoolean("persist.service.bt.a2dp.sink", false);
+        boolean isA2dpSink = SystemProperties.getBoolean(
+                "persist.vendor.service.bt.a2dp.sink", false);
         Log.i(TAG, "addAudioProfiles isA2dpSink :" + isA2dpSink);
         /* If property not enabled and request is for A2DPSinkService, don't add */
         if ((serviceName.equals("A2dpSinkService")) && (!isA2dpSink))
@@ -173,9 +174,9 @@ public class Config {
         if ((serviceName.equals("A2dpService")) && (isA2dpSink))
             return false;
 
-        boolean isBAEnabled = SystemProperties.getBoolean("persist.service.bt.bca", false);
+        boolean isBAEnabled = SystemProperties.getBoolean("persist.vendor.service.bt.bca", false);
         boolean isSplitA2dpSupported = SystemProperties.
-            getBoolean("persist.vendor.bt.enable.splita2dp", true);
+            getBoolean("persist.vendor.btstack.enable.splita2dp", true);
 
         if(serviceName.equals("BATService")) {
             Log.d(TAG," isBAEnabled = " + isBAEnabled

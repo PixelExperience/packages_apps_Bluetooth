@@ -158,7 +158,7 @@ public class HeadsetService extends ProfileService {
         // Step 4: Initialize native interface
         mSetMaxConfig = mMaxHeadsetConnections = mAdapterService.getMaxConnectedAudioDevices();
         if(mAdapterService.isVendorIntfEnabled()) {
-            String twsPlusEnabled = SystemProperties.get("persist.bt.enable.twsplus");
+            String twsPlusEnabled = SystemProperties.get("persist.vendor.btstack.enable.twsplus");
             if (!twsPlusEnabled.isEmpty() && "true".equals(twsPlusEnabled)) {
                 mIsTwsPlusEnabled = true;
             }
@@ -198,6 +198,7 @@ public class HeadsetService extends ProfileService {
         filter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
         filter.addAction(BluetoothA2dp.ACTION_PLAYING_STATE_CHANGED);
         filter.addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED);
+        filter.addAction(TelecomManager.ACTION_CALL_TYPE);
         registerReceiver(mHeadsetReceiver, filter);
         // Step 7: Mark service as started
 
@@ -456,6 +457,11 @@ public class HeadsetService extends ProfileService {
                     logD("Received BluetoothA2dp Connection State changed");
                     mHfpA2dpSyncInterface.updateA2DPConnectionState(intent);
                     break;
+                }
+                case TelecomManager.ACTION_CALL_TYPE: {
+                    logD("Received BluetoothHeadset action call type");
+                    doForEachConnectedStateMachine(stateMachine -> stateMachine.sendMessage(
+                            HeadsetStateMachine.UPDATE_CALL_TYPE, intent));
                 }
                 default:
                     Log.w(TAG, "Unknown action " + action);
@@ -1470,6 +1476,7 @@ public class HeadsetService extends ProfileService {
                 return false;
             }
             mVirtualCallStarted = true;
+            mSystemInterface.getHeadsetPhoneState().setIsCsCall(false);
             // Send virtual phone state changed to initialize SCO
             phoneStateChanged(0, 0, HeadsetHalConstants.CALL_STATE_DIALING, "", 0, true);
             phoneStateChanged(0, 0, HeadsetHalConstants.CALL_STATE_ALERTING, "", 0, true);
@@ -1747,6 +1754,11 @@ public class HeadsetService extends ProfileService {
             doForEachConnectedConnectingStateMachine(
                      stateMachine -> stateMachine.sendMessage(HeadsetStateMachine.CALL_STATE_CHANGED,
                              new HeadsetCallState(numActive, numHeld, callState, number, type)));
+            if (!(mSystemInterface.isInCall() || mSystemInterface.isRinging())) {
+                Log.i(TAG, "no call, sending resume A2DP message to state machines");
+                doForEachConnectedConnectingStateMachine(
+                     stateMachine -> stateMachine.sendMessage(HeadsetStateMachine.RESUME_A2DP));
+            }
         } else {
             if (!(mSystemInterface.isInCall() || mSystemInterface.isRinging())) {
                 //If no device is connected, resume A2DP if there is no call

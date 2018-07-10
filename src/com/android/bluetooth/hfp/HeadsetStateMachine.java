@@ -31,6 +31,9 @@ import android.support.annotation.VisibleForTesting;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.PhoneStateListener;
 import android.util.Log;
+import android.os.SystemProperties;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.ProfileService;
@@ -47,6 +50,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Scanner;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Iterator;
+import android.telecom.TelecomManager;
 
 /**
  * A Bluetooth Handset StateMachine
@@ -105,6 +110,8 @@ public class HeadsetStateMachine extends StateMachine {
     static final int CS_CALL_STATE_CHANGED_ALERTING = 22;
     static final int CS_CALL_STATE_CHANGED_ACTIVE = 23;
     static final int A2DP_STATE_CHANGED = 24;
+    static final int UPDATE_CALL_TYPE = 25;
+    static final int RESUME_A2DP = 26;
 
     static final int STACK_EVENT = 101;
     private static final int CLCC_RSP_TIMEOUT = 104;
@@ -141,6 +148,12 @@ public class HeadsetStateMachine extends StateMachine {
                                                                };
     private static final String VOIP_CALL_NUMBER = "10000000";
 
+    //VR app launched successfully
+    private static final int VR_SUCCESS = 1;
+
+    //VR app failed to launch
+    private static final int VR_FAILURE = 0;
+
     private final BluetoothDevice mDevice;
 
     // maintain call states in state machine as well
@@ -162,6 +175,7 @@ public class HeadsetStateMachine extends StateMachine {
     private final AdapterService mAdapterService;
     private final HeadsetNativeInterface mNativeInterface;
     private final HeadsetSystemInterface mSystemInterface;
+    private ConnectivityManager mConnectivityManager;
 
     // Runtime states
     private int mSpeakerVolume;
@@ -231,6 +245,8 @@ public class HeadsetStateMachine extends StateMachine {
         mAdapterService = Objects.requireNonNull(adapterService, "AdapterService cannot be null");
         // Create phonebook helper
         mPhonebook = new AtPhonebook(mHeadsetService, mNativeInterface);
+        mConnectivityManager = (ConnectivityManager)
+                          mHeadsetService.getSystemService(mHeadsetService.CONNECTIVITY_SERVICE);
         // Initialize state machine
         addState(mDisconnected);
         addState(mConnecting);
@@ -283,6 +299,10 @@ public class HeadsetStateMachine extends StateMachine {
         }
         if (mPhonebook != null) {
             mPhonebook.cleanup();
+        }
+        if (getAudioState() == BluetoothHeadset.STATE_AUDIO_CONNECTED &&
+                !mSystemInterface.getHeadsetPhoneState().getIsCsCall()) {
+            sendVoipConnectivityNetworktype(false);
         }
         mAudioParams.clear();
     }
@@ -560,6 +580,10 @@ public class HeadsetStateMachine extends StateMachine {
                 case DEVICE_STATE_CHANGED:
                     stateLogD("Ignoring DEVICE_STATE_CHANGED event");
                     break;
+                case UPDATE_CALL_TYPE:
+                    stateLogD("UPDATE_CALL_TYPE event");
+                    processIntentUpdateCallType((Intent) message.obj);
+                    break;
                 case STACK_EVENT:
                     HeadsetStackEvent event = (HeadsetStackEvent) message.obj;
                     stateLogD("STACK_EVENT: " + event);
@@ -683,6 +707,15 @@ public class HeadsetStateMachine extends StateMachine {
                 case CALL_STATE_CHANGED: {
                      HeadsetCallState callState = (HeadsetCallState) message.obj;
                      processCallState(callState, false);
+                     break;
+                }
+                case UPDATE_CALL_TYPE:
+                    stateLogD("UPDATE_CALL_TYPE event");
+                    processIntentUpdateCallType((Intent) message.obj);
+                    break;
+                case RESUME_A2DP: {
+                     stateLogD("RESUME_A2DP evt, resuming A2DP");
+                     mHeadsetService.getHfpA2DPSyncInterface().releaseA2DP(mDevice);
                      break;
                 }
                 case STACK_EVENT:
@@ -1047,8 +1080,13 @@ public class HeadsetStateMachine extends StateMachine {
                         break;
                     }
                     mNativeInterface.atResponseCode(mDevice,
-                            message.arg1 == 1 ? HeadsetHalConstants.AT_RESPONSE_OK
+                            message.arg1 == VR_SUCCESS ? HeadsetHalConstants.AT_RESPONSE_OK
                                     : HeadsetHalConstants.AT_RESPONSE_ERROR, 0);
+                    if (message.arg1 != VR_SUCCESS) {
+                       Log.d(TAG, "VOICE_RECOGNITION_RESULT: not creating SCO since VR app"+
+                                  " failed to start VR");
+                       break;
+                    }
 
                     if (mHeadsetService.getHfpA2DPSyncInterface().suspendA2DP(
                           HeadsetA2dpSync.A2DP_SUSPENDED_BY_VR, mDevice) == true) {
@@ -1091,6 +1129,10 @@ public class HeadsetStateMachine extends StateMachine {
                 case QUERY_PHONE_STATE_AT_SLC:
                     stateLogD("Update call states after SLC is up");
                     mSystemInterface.queryPhoneState();
+                    break;
+                case UPDATE_CALL_TYPE:
+                    stateLogD("UPDATE_CALL_TYPE event");
+                    processIntentUpdateCallType((Intent) message.obj);
                     break;
                 case STACK_EVENT:
                     HeadsetStackEvent event = (HeadsetStackEvent) message.obj;
@@ -1297,6 +1339,11 @@ public class HeadsetStateMachine extends StateMachine {
                     stateLogD("ignore DISCONNECT_AUDIO, device=" + mDevice);
                     // ignore
                     break;
+                case RESUME_A2DP: {
+                     stateLogD("RESUME_A2DP evt, resuming A2DP");
+                     mHeadsetService.getHfpA2DPSyncInterface().releaseA2DP(mDevice);
+                     break;
+                }
                 default:
                     return super.processMessage(message);
             }
@@ -1317,6 +1364,12 @@ public class HeadsetStateMachine extends StateMachine {
                         broadcastAudioState(mDevice, BluetoothHeadset.STATE_AUDIO_DISCONNECTED,
                                 BluetoothHeadset.STATE_AUDIO_DISCONNECTED);
                         break;
+                    }
+                    if (!mSystemInterface.getHeadsetPhoneState().getIsCsCall()) {
+                        stateLogI("Sco connected for call other than CS, check network type");
+                        sendVoipConnectivityNetworktype(true);
+                    } else {
+                        stateLogI("Sco connected for CS call, do not check network type");
                     }
                     stateLogI("processAudioEvent: audio connected");
                     transitionTo(mAudioOn);
@@ -1547,6 +1600,13 @@ public class HeadsetStateMachine extends StateMachine {
                         if(mSystemInterface.getAudioManager().isSpeakerphoneOn()) {
                             mSystemInterface.getAudioManager().setSpeakerphoneOn(true);
                         }
+                    }
+                    if (!mSystemInterface.getHeadsetPhoneState().getIsCsCall()) {
+                        stateLogI("Sco disconnected for call other than CS, check network type");
+                        sendVoipConnectivityNetworktype(false);
+                        mSystemInterface.getHeadsetPhoneState().setIsCsCall(true);
+                    } else {
+                        stateLogI("Sco disconnected for CS call, do not check network type");
                     }
                     transitionTo(mConnected);
                     break;
@@ -2058,14 +2118,23 @@ public class HeadsetStateMachine extends StateMachine {
                 mNativeInterface.phoneStateChange(mDevice, callState);
             }
         }
+    }
 
-        // if call ended when there is no SCO, resume A2DP if we have suspended
-        if ((getCurrentState() == mConnecting || getCurrentState() == mConnected) &&
-               !(mSystemInterface.isInCall() || mSystemInterface.isRinging())) {
-           Log.d(TAG, "No call is present, resume A2DP if suspended by us");
-           mHeadsetService.getHfpA2DPSyncInterface().releaseA2DP(mDevice);
+    private void processIntentUpdateCallType(Intent intent) {
+        mIsCsCall = intent.getBooleanExtra(TelecomManager.EXTRA_CALL_TYPE_CS, true);
+        Log.d(TAG, "processIntentUpdateCallType " + mIsCsCall);
+        final HeadsetPhoneState mPhoneState = mSystemInterface.getHeadsetPhoneState();
+        mPhoneState.setIsCsCall(mIsCsCall);
+        if (getAudioState() == BluetoothHeadset.STATE_AUDIO_CONNECTED) {
+            if (!mPhoneState.getIsCsCall()) {
+                log("processIntentUpdateCallType, Non CS call, check for network type");
+                sendVoipConnectivityNetworktype(true);
+            } else {
+                log("processIntentUpdateCallType, CS call, do not check for network type");
+            }
+        } else {
+            log("processIntentUpdateCallType: Sco not yet connected");
         }
-
     }
 
     private void processIntentA2dpPlayStateChanged(int a2dpState) {
@@ -2585,6 +2654,25 @@ public class HeadsetStateMachine extends StateMachine {
             }
         }
         return false;
+    }
+
+    private void sendVoipConnectivityNetworktype(boolean isVoipStarted) {
+        Log.d(TAG, "Enter sendVoipConnectivityNetworktype()");
+        NetworkInfo networkInfo = mConnectivityManager.getActiveNetworkInfo();
+        if (networkInfo == null || !networkInfo.isAvailable() || !networkInfo.isConnected()) {
+            Log.d(TAG, "No connected/available connectivity network, don't update soc");
+            return;
+        }
+
+        if (networkInfo.getType() == ConnectivityManager.TYPE_MOBILE) {
+            Log.d(TAG, "Voip/VoLTE started/stopped on n/w TYPE_MOBILE, don't update to soc");
+        } else if (networkInfo.getType() == ConnectivityManager.TYPE_WIFI) {
+            Log.d(TAG, "Voip/VoLTE started/stopped on n/w TYPE_WIFI, update n/w type & start/stop to soc");
+            mAdapterService.voipNetworkWifiInfo(isVoipStarted, true);
+        } else {
+            Log.d(TAG, "Voip/VoLTE started/stopped on some other n/w, don't update to soc");
+        }
+        Log.d(TAG, "Exit sendVoipConnectivityNetworktype()");
     }
 
     @Override
