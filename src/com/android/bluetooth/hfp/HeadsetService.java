@@ -821,7 +821,6 @@ public class HeadsetService extends ProfileService {
                       allowSecondHfConnection = true;
                    } else {
                       allowSecondHfConnection = false;
-                      mDisconnectAll = true;
                    }
                }
             }
@@ -1087,7 +1086,8 @@ public class HeadsetService extends ProfileService {
                 }
                 pendingRequestByHeadset = true;
             }
-            if (!Objects.equals(device, mActiveDevice) && !setActiveDevice(device)) {
+            if (!Objects.equals(device, mActiveDevice) &&
+                  !mAdapterService.isTwsPlusDevice(device) && !setActiveDevice(device)) {
                 Log.w(TAG, "startVoiceRecognition: failed to set " + device + " as active");
                 return false;
             }
@@ -1360,22 +1360,12 @@ public class HeadsetService extends ProfileService {
                 return true;
             }
             if (isAudioOn()) {
-                Log.w(TAG, "connectAudio: audio is not idle, current audio devices are "
-                        + Arrays.toString(getNonIdleAudioDevices().toArray()));
-
-                BluetoothDevice activeScoDevice = getNonIdleAudioDevices().get(0);
-                AdapterService adapterService = AdapterService.getAdapterService();
-                //If activeScoDevice present and It is TWSP device
-                //and PeerDevice is still connected
-                //return true to telePhony
-                if (activeScoDevice != null
-                    && adapterService.isTwsPlusDevice(activeScoDevice)
-                    && getTwsPlusConnectedPeer(activeScoDevice) != null) {
-                    Log.d(TAG, "is Tws case, keeping Audioon is Success");
-                    return true;
-                } else {
-                    return false;
-                }
+                //SCO is connecting or connected.
+                //Return true to telephony
+                Log.w(TAG, "connectAudio: audio is not idle, current audio devices are: "
+                        + Arrays.toString(getNonIdleAudioDevices().toArray()) + 
+                        " ,returning true");
+                return true;
             }
             stateMachine.sendMessage(HeadsetStateMachine.CONNECT_AUDIO, device);
         }
@@ -1549,7 +1539,8 @@ public class HeadsetService extends ProfileService {
                     return false;
                 }
             }
-            if (!setActiveDevice(fromDevice)) {
+            if (!mAdapterService.isTwsPlusDevice(fromDevice) &&
+                !setActiveDevice(fromDevice)) {
                 Log.e(TAG, "dialOutgoingCall failed to set active device to " + fromDevice);
                 return false;
             }
@@ -1638,7 +1629,7 @@ public class HeadsetService extends ProfileService {
                         + ", already pending by " + mVoiceRecognitionTimeoutEvent);
                 return false;
             }
-            if (!setActiveDevice(fromDevice)) {
+            if (!mAdapterService.isTwsPlusDevice(fromDevice) && !setActiveDevice(fromDevice)) {
                 Log.w(TAG, "startVoiceRecognitionByHeadset: failed to set " + fromDevice
                         + " as active");
                 return false;
