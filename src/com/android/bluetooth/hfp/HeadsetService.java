@@ -1716,6 +1716,12 @@ public class HeadsetService extends ProfileService {
                     // stop voice recognition if there is any incoming call
                     stopVoiceRecognition(mActiveDevice);
                 }
+            } else {
+                // ignore CS non-call state update when virtual call started
+                if (!isVirtualCall && mVirtualCallStarted) {
+                    Log.i(TAG, "Ignore CS non-call state update");
+                    return ;
+                }
             }
             if (mDialingOutTimeoutEvent != null) {
                 // Send result to state machine when dialing starts
@@ -1945,17 +1951,20 @@ public class HeadsetService extends ProfileService {
                                 + "voice call");
                     }
                 }
-                // trigger SCO after SCO disconnected with previous active
-                // device
-                if (mActiveDevice != null && !mActiveDevice.equals(device) &&
+                //Transfer SCO is not needed for TWS+ devices
+                if (!mAdapterService.isTwsPlusDevice(device)) {
+                    // trigger SCO after SCO disconnected with previous active
+                    // device
+                    if (mActiveDevice != null && !mActiveDevice.equals(device) &&
                                  shouldPersistAudio()) {
-                   Log.d(TAG, "onAudioStateChangedFromStateMachine: triggering SCO with device "
+                        Log.d(TAG, "onAudioStateChangedFromStateMachine: triggering SCO with device "
                               + mActiveDevice);
-                   if (!connectAudio(mActiveDevice)) {
-                       Log.w(TAG, "onAudioStateChangedFromStateMachine, failed to connect"
-                          + " audio to new " + "active device " + mActiveDevice
-                          + ", after " + device + " is disconnected from SCO");
-                   }
+                       if (!connectAudio(mActiveDevice)) {
+                           Log.w(TAG, "onAudioStateChangedFromStateMachine, failed to connect"
+                              + " audio to new " + "active device " + mActiveDevice
+                              + ", after " + device + " is disconnected from SCO");
+                       }
+                    }
                 }
             }
         }
