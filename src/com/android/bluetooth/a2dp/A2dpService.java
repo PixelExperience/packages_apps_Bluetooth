@@ -145,7 +145,8 @@ public class A2dpService extends ProfileService {
     protected boolean start() {
         Log.i(TAG, "start()");
         if (sA2dpService != null) {
-            throw new IllegalStateException("start() called twice");
+            Log.w(TAG, "A2dpService is already running");
+            return true;
         }
 
         // Step 1: Get BluetoothAdapter, AdapterService, A2dpNativeInterface, AudioManager.
@@ -442,6 +443,10 @@ public class A2dpService extends ProfileService {
             } else if(mAdapterService.getTwsPlusPeerAddress(mConnDev).equals(device.getAddress())) {
                 Log.d(TAG,"isConnectionAllowed: Peer earbud pair allow connection");
                 return true;
+            } else {
+                Log.d(TAG,"isConnectionAllowed: Unpaired earbud, disconnect previous TWS+ device");
+                disconnectExisting = true;
+                return false;
             }
         } else if (tws_connected && !mAdapterService.isTwsPlusDevice(device)) {
             Log.d(TAG,"isConnectionAllowed: Disconnect tws device to connect to legacy headset");
